@@ -1,19 +1,18 @@
 use winit::{
     event::*,
-    event_loop::{EventLoop, ControlFlow},
-    window::{Window, WindowBuilder},
+    window::{Window},
 };
-use std::borrow::Cow;
-use wgpu::{Surface,Adapter,DeviceDescriptor};
+
 pub struct Renderer {
     surface: wgpu::Surface,
-    adapter: wgpu::Adapter,
+    //adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
     sc_desc: wgpu::SwapChainDescriptor,
     swap_chain: wgpu::SwapChain,
     render_pipeline: wgpu::RenderPipeline,
     size: winit::dpi::PhysicalSize<u32>,
+    //command_encoder: wgpu::CommandEncoder
 }
 
 struct ShaderModuleSet {
@@ -23,19 +22,15 @@ struct ShaderModuleSet {
 
 impl Renderer {
 
-
     fn create_shader_modules(device: &wgpu::Device) -> ShaderModuleSet {
         let vs_src = include_str!("../../shaders/shader.vert");
         let fs_src = include_str!("../../shaders/shader.frag");
         let mut compiler = shaderc::Compiler::new().unwrap();
         let vs_spirv = compiler.compile_into_spirv(vs_src, shaderc::ShaderKind::Vertex, "shader.vert", "main", None).unwrap();
         let fs_spirv = compiler.compile_into_spirv(fs_src, shaderc::ShaderKind::Fragment, "shader.frag", "main", None).unwrap();
-        let vs_data = Cow::from(vs_spirv.as_binary());
-        let fs_data = Cow::from(fs_spirv.as_binary());
-  
         
-        let vs_module = device.create_shader_module(wgpu::ShaderModuleSource::SpirV(vs_data));
-        let fs_module = device.create_shader_module(wgpu::ShaderModuleSource::SpirV(fs_data));
+        let vs_module = device.create_shader_module(wgpu::util::make_spirv(&vs_spirv.as_binary_u8()));
+        let fs_module = device.create_shader_module(wgpu::util::make_spirv(&fs_spirv.as_binary_u8()));
         ShaderModuleSet {
             vertex: vs_module,
             fragment: fs_module
@@ -44,7 +39,7 @@ impl Renderer {
 
     fn create_pipeline(device : &wgpu::Device, sc_desc: &wgpu::SwapChainDescriptor) -> wgpu::RenderPipeline {
         let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Mypipeline"),
+            label: Some("Pipeline Layout 1"),
             push_constant_ranges: &[],
             bind_group_layouts: &[],
         });
@@ -52,7 +47,7 @@ impl Renderer {
         let shader_modules = Renderer::create_shader_modules(&device);
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("the pipe"),
+            label: Some("Render Pipeline 1"),
             layout: Some(&render_pipeline_layout),
             vertex_stage: wgpu::ProgrammableStageDescriptor {
                 module: &shader_modules.vertex,
@@ -63,8 +58,8 @@ impl Renderer {
                 entry_point: "main",
             }),
             rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-                front_face : wgpu::FrontFace::Cw,
-                cull_mode: wgpu::CullMode::None,
+                front_face : wgpu::FrontFace::Ccw,
+                cull_mode: wgpu::CullMode::Back,
                 clamp_depth: false,
                 depth_bias_clamp: 0.0,
                 depth_bias: 0,
@@ -143,15 +138,18 @@ impl Renderer {
         let (sc_desc,swap_chain) = Renderer::create_swapchain(&device, &surface, size);
 
         let render_pipeline = Renderer::create_pipeline(&device,&sc_desc);
+        //let command_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+         //   label: Some("Render Encoder"),
+       //  });
         Self {
             surface,
-            adapter,
             device,
             queue,
             sc_desc,
             swap_chain,
             render_pipeline,
             size,
+            //command_encoder
         }
     }
 
@@ -174,16 +172,14 @@ impl Renderer {
 
     pub fn render(&mut self) {
         let frame = self.swap_chain.get_current_frame();
-        match frame {
-            Ok(frame) => {
-                let frame_tex = frame.output;
-                let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        if let Ok(f) = frame {
+            let frame_tex = f.output;
+            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Render Encoder"),
-                });
-        
-                {
-                    
-                let clear_color : wgpu::Color = wgpu::Color{r: 1.0, g: 0.0, b: 0.0, a: 1.0};
+            });
+
+            { //Begin scope to fix borrow problem. Encoder gets borrowed mutable at .begin_render_pass
+                let clear_color : wgpu::Color = wgpu::Color{r: 0.1, g: 0.15, b: 0.8, a: 1.0};
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         color_attachments: &[
                             wgpu::RenderPassColorAttachmentDescriptor {
@@ -199,21 +195,14 @@ impl Renderer {
                     });
                 render_pass.set_pipeline(&self.render_pipeline);
                 render_pass.draw(0..3, 0..1);
-                
-            }
-            self.queue.submit(
-                Some(encoder.finish())
-            );
-        },
-            Err(_) => {
-                println!("Error getting frame.");
-            }
+            
+            } //end scope for borrow problem. Now encoder is no longer borrowed mutably.
+
+            self.queue.submit(Some(encoder.finish()));
+
+        } else {
+            println!("Error getting next frame...");
+        }      
         
-        }
-        
-        
-    
-       
-        
-    }
+    }//End render
 }
