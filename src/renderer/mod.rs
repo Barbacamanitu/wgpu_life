@@ -10,8 +10,8 @@ pub struct Renderer {
     sc_desc: wgpu::SwapChainDescriptor,
     swap_chain: wgpu::SwapChain,
     render_pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
     size: winit::dpi::PhysicalSize<u32>,
+    vert_index_buffers: VertexAndIndexBuffer,
 }
 
 struct ShaderModuleSet {
@@ -26,6 +26,12 @@ struct Vertex {
     color: [f32; 3],
 }
 
+struct VertexAndIndexBuffer {
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    num_vertices: u32,
+    num_indices: u32
+}
 
 
 unsafe impl bytemuck::Pod for Vertex {}
@@ -109,7 +115,7 @@ impl Renderer {
                 }],
             depth_stencil_state: None,
             vertex_state: wgpu::VertexStateDescriptor {
-                index_format: wgpu::IndexFormat::Uint32,
+                index_format: wgpu::IndexFormat::Uint16,
                 vertex_buffers: &[
                     Vertex::desc()
                 ]
@@ -164,6 +170,45 @@ impl Renderer {
         (sc_desc,swap_chain)
     }
 
+    fn get_vertices(device: &wgpu::Device) -> VertexAndIndexBuffer {
+        const VERTICES: &[Vertex] = &[
+            Vertex { position: [-0.0868241, 0.49240386, 0.0], color: [0.5, 0.0, 0.5] }, // A
+            Vertex { position: [-0.49513406, 0.06958647, 0.0], color: [0.5, 0.0, 0.5] }, // B
+            Vertex { position: [-0.21918549, -0.44939706, 0.0], color: [0.5, 0.0, 0.5] }, // C
+            Vertex { position: [0.35966998, -0.3473291, 0.0], color: [0.5, 0.0, 0.5] }, // D
+            Vertex { position: [0.44147372, 0.2347359, 0.0],color: [0.5, 0.0, 0.5] }, // E
+        ];
+
+        const INDICES: &[u16] = &[
+            0, 1, 4,
+            1, 2, 4,
+            2, 3, 4,
+        ];
+
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(VERTICES),
+            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+        });
+
+        let index_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Index Buffer"),
+                contents: bytemuck::cast_slice(INDICES),
+                usage: wgpu::BufferUsage::INDEX,
+            }
+        );
+        let num_indices = INDICES.len() as u32;
+        println!("Number indices: {}",num_indices);
+        let num_vertices = VERTICES.len() as u32;
+        VertexAndIndexBuffer {
+            vertex_buffer,
+            index_buffer,
+            num_vertices,
+            num_indices
+        }
+    }
+
     pub async fn new(window: &Window) -> Self {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
@@ -174,16 +219,9 @@ impl Renderer {
         let (sc_desc,swap_chain) = Renderer::create_swapchain(&device, &surface, size);
 
         let render_pipeline = Renderer::create_pipeline(&device,&sc_desc);
-        const VERTICES: &[Vertex] = &[
-            Vertex { position: [0.0, 0.5, 0.0], color: [1.0, 0.0, 0.0] },
-            Vertex { position: [-0.5, -0.5, 0.0], color: [0.0, 1.0, 0.0] },
-            Vertex { position: [0.5, -0.5, 0.0], color: [0.0, 0.0, 1.0] },
-        ];
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
-            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
-        });
+        
+        let vert_index_buffers = Renderer::get_vertices(&device); 
+       
         Self {
             surface,
             device,
@@ -191,8 +229,8 @@ impl Renderer {
             sc_desc,
             swap_chain,
             render_pipeline,
-            vertex_buffer,
             size,
+            vert_index_buffers,
         }
     }
 
@@ -237,8 +275,10 @@ impl Renderer {
                         depth_stencil_attachment: None,
                     });
                 render_pass.set_pipeline(&self.render_pipeline);
-                render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                render_pass.draw(0..3, 0..1);
+                render_pass.set_vertex_buffer(0, self.vert_index_buffers.vertex_buffer.slice(..));
+
+                render_pass.set_index_buffer(self.vert_index_buffers.index_buffer.slice(..));
+                render_pass.draw_indexed(0..self.vert_index_buffers.num_indices, 0,0..1);
             
             } //end scope for borrow problem. Now encoder is no longer borrowed mutably.
 
