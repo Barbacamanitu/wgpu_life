@@ -2,17 +2,16 @@ use winit::{
     event::*,
     window::{Window},
 };
-
+use wgpu::{BlendOperation,BlendFactor,util::DeviceExt};
 pub struct Renderer {
     surface: wgpu::Surface,
-    //adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
     sc_desc: wgpu::SwapChainDescriptor,
     swap_chain: wgpu::SwapChain,
     render_pipeline: wgpu::RenderPipeline,
+    vertex_buffer: wgpu::Buffer,
     size: winit::dpi::PhysicalSize<u32>,
-    //command_encoder: wgpu::CommandEncoder
 }
 
 struct ShaderModuleSet {
@@ -20,17 +19,44 @@ struct ShaderModuleSet {
     fragment: wgpu::ShaderModule
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+struct Vertex {
+    position: [f32; 3],
+    color: [f32; 3],
+}
+
+
+
+unsafe impl bytemuck::Pod for Vertex {}
+unsafe impl bytemuck::Zeroable for Vertex {}
+
+impl Vertex {
+    fn desc<'a>() -> wgpu::VertexBufferDescriptor<'a> {
+        wgpu::VertexBufferDescriptor {
+            stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::InputStepMode::Vertex,
+            attributes: &[ // 3.
+            wgpu::VertexAttributeDescriptor {
+                offset: 0, // 4.
+                shader_location: 0, // 5.
+                format: wgpu::VertexFormat::Float3, // 6.
+            },
+            wgpu::VertexAttributeDescriptor {
+                offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                shader_location: 1,
+                format: wgpu::VertexFormat::Float3,
+            }
+            ]
+        }
+    }
+}
+
 impl Renderer {
 
     fn create_shader_modules(device: &wgpu::Device) -> ShaderModuleSet {
-        let vs_src = include_str!("../../shaders/shader.vert");
-        let fs_src = include_str!("../../shaders/shader.frag");
-        let mut compiler = shaderc::Compiler::new().unwrap();
-        let vs_spirv = compiler.compile_into_spirv(vs_src, shaderc::ShaderKind::Vertex, "shader.vert", "main", None).unwrap();
-        let fs_spirv = compiler.compile_into_spirv(fs_src, shaderc::ShaderKind::Fragment, "shader.frag", "main", None).unwrap();
-        
-        let vs_module = device.create_shader_module(wgpu::util::make_spirv(&vs_spirv.as_binary_u8()));
-        let fs_module = device.create_shader_module(wgpu::util::make_spirv(&fs_spirv.as_binary_u8()));
+        let vs_module = device.create_shader_module(wgpu::include_spirv!("../shaders/shader.vert.spv"));
+        let fs_module = device.create_shader_module(wgpu::include_spirv!("../shaders/shader.frag.spv"));
         ShaderModuleSet {
             vertex: vs_module,
             fragment: fs_module
@@ -69,14 +95,24 @@ impl Renderer {
             color_states: &[
                 wgpu::ColorStateDescriptor {
                     format: sc_desc.format,
-                    color_blend: wgpu::BlendDescriptor::REPLACE,
-                    alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                    color_blend: wgpu::BlendDescriptor {
+                        src_factor: BlendFactor::SrcAlpha,
+                        dst_factor: BlendFactor::OneMinusSrcAlpha,
+                        operation: BlendOperation::Add,                 
+                    },
+                    alpha_blend: wgpu::BlendDescriptor {
+                        src_factor: BlendFactor::One,
+                        dst_factor: BlendFactor::One,
+                        operation: BlendOperation::Add,                 
+                    },
                     write_mask: wgpu::ColorWrite::ALL,
                 }],
             depth_stencil_state: None,
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: wgpu::IndexFormat::Uint32,
-                vertex_buffers: &[]
+                vertex_buffers: &[
+                    Vertex::desc()
+                ]
             },
             sample_count: 1,
             sample_mask: !0,
@@ -122,7 +158,7 @@ impl Renderer {
             format: wgpu::TextureFormat::Bgra8UnormSrgb,
             width: size.width,
             height: size.height,
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode: wgpu::PresentMode::Fifo
         };
         let swap_chain = device.create_swap_chain(&surface, &sc_desc);
         (sc_desc,swap_chain)
@@ -138,9 +174,16 @@ impl Renderer {
         let (sc_desc,swap_chain) = Renderer::create_swapchain(&device, &surface, size);
 
         let render_pipeline = Renderer::create_pipeline(&device,&sc_desc);
-        //let command_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-         //   label: Some("Render Encoder"),
-       //  });
+        const VERTICES: &[Vertex] = &[
+            Vertex { position: [0.0, 0.5, 0.0], color: [1.0, 0.0, 0.0] },
+            Vertex { position: [-0.5, -0.5, 0.0], color: [0.0, 1.0, 0.0] },
+            Vertex { position: [0.5, -0.5, 0.0], color: [0.0, 0.0, 1.0] },
+        ];
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(VERTICES),
+            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+        });
         Self {
             surface,
             device,
@@ -148,8 +191,8 @@ impl Renderer {
             sc_desc,
             swap_chain,
             render_pipeline,
+            vertex_buffer,
             size,
-            //command_encoder
         }
     }
 
@@ -194,6 +237,7 @@ impl Renderer {
                         depth_stencil_attachment: None,
                     });
                 render_pass.set_pipeline(&self.render_pipeline);
+                render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                 render_pass.draw(0..3, 0..1);
             
             } //end scope for borrow problem. Now encoder is no longer borrowed mutably.
